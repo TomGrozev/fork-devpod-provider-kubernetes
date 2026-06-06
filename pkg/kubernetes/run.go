@@ -140,10 +140,13 @@ func (k *KubernetesDriver) runContainer(
 
 	// loop over volume mounts
 	volumeMounts := []corev1.VolumeMount{getVolumeMount(0, mount)}
+	tmpfsVolumes := []corev1.Volume{}
 	for idx, mount := range options.Mounts {
-		volumeMount := getVolumeMount(idx+1, mount)
 		if mount.Type == "bind" || mount.Type == "volume" {
-			volumeMounts = append(volumeMounts, volumeMount)
+			volumeMounts = append(volumeMounts, getVolumeMount(idx+1, mount))
+		} else if mount.Type == "tmpfs" {
+			volumeMounts = append(volumeMounts, getTmpfsVolumeMount(mount))
+			tmpfsVolumes = append(tmpfsVolumes, getTmpfsVolume(mount))
 		} else {
 			k.Log.Warnf("Unsupported mount type '%s' in mount '%s', will skip", mount.Type, mount.String())
 		}
@@ -218,7 +221,7 @@ func (k *KubernetesDriver) runContainer(
 	pod.Spec.NodeSelector = nodeSelector
 	pod.Spec.InitContainers = initContainers
 	pod.Spec.Containers = getContainers(pod, options.Image, options.Entrypoint, options.Cmd, envVars, volumeMounts, capabilities, resources, options.Privileged, k.options.DangerouslyOverrideImage, k.options.StrictSecurity)
-	pod.Spec.Volumes = getVolumes(pod, id)
+	pod.Spec.Volumes = getVolumes(pod, id, tmpfsVolumes)
 
 	affinity := false
 	stdout := &bytes.Buffer{}
@@ -418,7 +421,7 @@ func getContainers(
 	return retContainers
 }
 
-func getVolumes(pod *corev1.Pod, id string) []corev1.Volume {
+func getVolumes(pod *corev1.Pod, id string, tmpfsVolumes []corev1.Volume) []corev1.Volume {
 	volumes := []corev1.Volume{
 		{
 			Name: "devpod",
@@ -429,6 +432,8 @@ func getVolumes(pod *corev1.Pod, id string) []corev1.Volume {
 			},
 		},
 	}
+
+	volumes = append(volumes, tmpfsVolumes...)
 
 	if pod.Spec.Volumes != nil {
 		volumes = append(volumes, pod.Spec.Volumes...)
