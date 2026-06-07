@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -141,6 +142,7 @@ func (k *KubernetesDriver) runContainer(
 	// loop over volume mounts
 	volumeMounts := []corev1.VolumeMount{getVolumeMount(0, mount)}
 	tmpfsVolumes := []corev1.Volume{}
+	fixMountOther(options.Mounts)
 	for idx, mount := range options.Mounts {
 		if mount.Type == "bind" || mount.Type == "volume" {
 			volumeMounts = append(volumeMounts, getVolumeMount(idx+1, mount))
@@ -498,6 +500,47 @@ func getNodeSelector(pod *corev1.Pod, rawNodeSelector string) (map[string]string
 	}
 
 	return nodeSelector, nil
+}
+
+func fixMountOther(mounts []*config.Mount) {
+	raw := os.Getenv("DEVCONTAINER_RUN_OPTIONS")
+	if raw == "" || raw == "null" {
+		return
+	}
+
+	var opts struct {
+		Mounts []json.RawMessage `json:"mounts,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(raw), &opts); err != nil {
+		return
+	}
+
+	for i, rawMount := range opts.Mounts {
+		if i >= len(mounts) {
+			break
+		}
+		// If Other is already populated, nothing to fix.
+		if len(mounts[i].Other) > 0 {
+			continue
+		}
+		// Mounts can be either a JSON string ("source:target:type:...") or a
+		// JSON object. Only the object form is affected by the upstream bug —
+		// the string form goes through ParseMount which handles Other. So
+		// skip anything that isn't a JSON object.
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(rawMount, &obj); err != nil {
+			continue
+		}
+		otherRaw, ok := obj["other"]
+		if !ok {
+			continue
+		}
+		var others []string
+		if err := json.Unmarshal(otherRaw, &others); err != nil {
+			continue
+		}
+		mounts[i].Other = others
+	}
 }
 
 func (k *KubernetesDriver) StartDevContainer(ctx context.Context, workspaceId string) error {
